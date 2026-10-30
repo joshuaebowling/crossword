@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crossword Builder</title>
+<style>
+  :root {
+    --cell: 36px;
+    --accent: #2563eb;
+    --word: #dbeafe;
+    --active: #fde68a;
+    --bad: #fecaca;
+    --good: #bbf7d0;
+    --border: #1f2937;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f3f4f6; color: #111827; }
+  header { background: #111827; color: #fff; padding: 14px 24px; }
+  header h1 { margin: 0; font-size: 20px; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .panel h2 { margin: 0 0 8px; font-size: 16px; }
+  textarea { width: 100%; height: 300px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; resize: vertical; }
+  .hint { font-size: 12px; color: #6b7280; margin: 6px 0 10px; line-height: 1.4; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+  button.secondary { background: #e5e7eb; color: #111827; }
+  button:hover { filter: brightness(1.08); }
+  label.opt { font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  #status { font-size: 13px; margin-top: 10px; }
+  #status.warn { color: #b45309; }
+  #status.ok { color: #047857; }
+  .puzzle-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .grid-area { overflow: auto; max-width: 100%; }
+  #grid { display: grid; gap: 0; border: 2px solid var(--border); width: max-content; background: var(--border); }
+  .cell { width: var(--cell); height: var(--cell); position: relative; background: #fff; outline: 1px solid var(--border); }
+  .cell.block { background: transparent; outline: none; }
+  #grid.has-blocks .cell.block { background: #111827; }
+  .cell input { width: 100%; height: 100%; border: 0; text-align: center; font-size: calc(var(--cell) * .55); font-weight: 600; text-transform: uppercase; background: transparent; padding-top: 6px; caret-color: transparent; cursor: pointer; color: #111827; }
+  .cell input:focus { outline: none; }
+  .cell .num { position: absolute; top: 1px; left: 2px; font-size: calc(var(--cell) * .28); line-height: 1; pointer-events: none; color: #374151; }
+  .cell.in-word { background: var(--word); }
+  .cell.active { background: var(--active); }
+  .cell.wrong { background: var(--bad); }
+  .cell.right { background: var(--good); }
+  .cell.revealed input { color: #b91c1c; }
+  .clues { display: flex; gap: 24px; flex-wrap: wrap; flex: 1; min-width: 280px; }
+  .clues section { flex: 1; min-width: 220px; }
+  .clues h3 { margin: 0 0 6px; font-size: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+  .clues ol { list-style: none; padding: 0; margin: 0; font-size: 14px; }
+  .clues li { padding: 4px 6px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; }
+  .clues li b { min-width: 24px; text-align: right; }
+  .clues li.current { background: var(--word); }
+  .clues li.done { color: #9ca3af; text-decoration: line-through; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+  .current-clue { background: var(--word); padding: 8px 12px; border-radius: 6px; font-size: 15px; margin-bottom: 12px; min-height: 38px; }
+  #unplaced { font-size: 13px; color: #b45309; margin-top: 10px; }
+  #empty { color: #6b7280; padding: 40px; text-align: center; }
+  .win { background: #047857; color: #fff; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; display: none; }
+  @media print {
+    header, .controls, .toolbar, .current-clue, .win, #unplaced { display: none !important; }
+    main { display: block; padding: 0; }
+    .panel { box-shadow: none; }
+    .cell.in-word, .cell.active, .cell.wrong, .cell.right { background: #fff !important; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<header><h1>Crossword Builder</h1></header>
+<main>
+  <div class="panel controls">
+    <h2>Words</h2>
+    <textarea id="words" spellcheck="false"></textarea>
+    <div class="hint">
+      One entry per line. Add an optional clue after a colon:<br>
+      <code>PYTHON: A snake or a programming language</code><br>
+      Words without clues get a scrambled-letter hint. Spaces and punctuation in words are ignored.
+    </div>
+    <label class="opt"><input type="checkbox" id="optBlocks" checked> Shade empty squares</label>
+    <div class="row">
+      <button id="btnGenerate">Generate puzzle</button>
+      <button id="btnSample" class="secondary">Load sample</button>
+    </div>
+    <div id="status"></div>
+    <div id="unplaced"></div>
+  </div>
+
+  <div class="panel">
+    <div class="toolbar">
+      <button id="btnCheck" class="secondary">Check</button>
+      <button id="btnRevealWord" class="secondary">Reveal word</button>
+      <button id="btnReveal" class="secondary">Reveal all</button>
+      <button id="btnClear" class="secondary">Clear</button>
+      <button id="btnShuffle" class="secondary">New layout</button>
+      <button id="btnPrint" class="secondary">Print</button>
+    </div>
+    <div class="win" id="win">Solved! Nice work.</div>
+    <div class="current-clue" id="currentClue"></div>
+    <div id="empty">Enter some words and click <b>Generate puzzle</b>.</div>
+    <div class="puzzle-wrap" id="puzzleWrap" hidden>
+      <div class="grid-area"><div id="grid"></div></div>
+      <div class="clues">
+        <section><h3>Across</h3><ol id="cluesAcross"></ol></section>
+        <section><h3>Down</h3><ol id="cluesDown"></ol></section>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const SAMPLE = [
+    'JAVASCRIPT: Language of the web',
+    'BROWSER: Program used to view websites',
+    'HTML: Markup language for web pages',
+    'STYLESHEET: Where CSS rules live',
+    'FUNCTION: Reusable block of code',
+    'VARIABLE: Named storage for a value',
+    'ARRAY: Ordered list of values',
+    'OBJECT: Collection of key/value pairs',
+    'LOOP: Repeats code',
+    'DEBUG: Find and fix errors',
+    'SERVER: Machine that answers requests',
+    'PIXEL: Smallest dot on a screen',
+    'CURSOR: Blinking text marker',
+    'KEYBOARD: Typing device',
+  ].join('\n');
+
+  // ---------- Parsing ----------
+  function parseInput(text) {
+    const seen = new Set();
+    const entries = [];
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = line.match(/^([^:=\t]+?)\s*(?:[:=\t]|\s-\s)\s*(.*)$/);
+      const display = (m ? m[1] : line).trim();
+      const clue = m ? m[2].trim() : '';
+      const answer = display.toUpperCase().normalize('NFD').replace(/[^A-Z]/g, '');
+      if (answer.length < 2 || seen.has(answer)) continue;
+      seen.add(answer);
+      entries.push({ answer, display, clue });
+    }
+    return entries;
+  }
+
+  // ---------- Generator ----------
+  const key = (r, c) => r + ',' + c;
+
+  class Layout {
+    constructor() {
+      this.cells = new Map(); // key -> {ch, across:bool, down:bool}
+      this.placed = [];       // {entry, row, col, dir}
+      this.minR = 0; this.maxR = -1; this.minC = 0; this.maxC = -1;
+      this.intersections = 0;
+    }
+    get(r, c) { return this.cells.get(key(r, c)); }
+    area() { return this.placed.length ? (this.maxR - this.minR + 1) * (this.maxC - this.minC + 1) : 0; }
+
+    // Returns number of intersections if placement valid, else -1.
+    check(word, r, c, dir) {
+      const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+      if (this.get(r - dr, c - dc) || this.get(r + dr * word.length, c + dc * word.length)) return -1;
+      let hits = 0;
+      for (let i = 0; i < word.length; i++) {
+        const rr = r + dr * i, cc = c + dc * i;
+        const cell = this.get(rr, cc);
+        if (cell) {
+          if (cell.ch !== word[i] || cell[dir]) return -1;
+          hits++;
+        } else {
+          // perpendicular neighbours must be empty to avoid accidental words
+          if (this.get(rr + dc, cc + dr) || this.get(rr - dc, cc - dr)) return -1;
+        }
+      }
+      return hits;
+    }
+
+    place(entry, r, c, dir, hits) {
+      const word = entry.answer;
+      const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+      for (let i = 0; i < word.length; i++) {
+        const rr = r + dr * i, cc = c + dc * i, k = key(rr, cc);
+        const cell = this.cells.get(k) || { ch: word[i], across: false, down: false };
+        cell[dir] = true;
+        this.cells.set(k, cell);
+      }
+      const endR = r + dr * (word.length - 1), endC = c + dc * (word.length - 1);
+      if (!this.placed.length) { this.minR = r; this.minC = c; this.maxR = endR; this.maxC = endC; }
+      else {
+        this.minR = Math.min(this.minR, r); this.minC = Math.min(this.minC, c);
+        this.maxR = Math.max(this.maxR, endR); this.maxC = Math.max(this.maxC, endC);
+      }
+      this.intersections += hits;
+      this.placed.push({ entry, row: r, col: c, dir });
+    }
+
+    candidates(word) {
+      const out = [];
+      for (const [k, cell] of this.cells) {
+        const [r, c] = k.split(',').map(Number);
+        for (let i = 0; i < word.length; i++) {
+          if (word[i] !== cell.ch) continue;
+          for (const dir of ['across', 'down']) {
+            if (cell[dir]) continue;
+            const sr = dir === 'down' ? r - i : r;
+            const sc = dir === 'across' ? c - i : c;
+            const hits = this.check(word, sr, sc, dir);
+            if (hits > 0) out.push({ r: sr, c: sc, dir, hits });
+          }
+        }
+      }
+      return out;
+    }
+
+    scoreCandidate(word, cand) {
+      const dr = cand.dir === 'down' ? 1 : 0, dc = cand.dir === 'across' ? 1 : 0;
+      const minR = Math.min(this.minR, cand.r), minC = Math.min(this.minC, cand.c);
+      const maxR = Math.max(this.maxR, cand.r + dr * (word.length - 1));
+      const maxC = Math.max(this.maxC, cand.c + dc * (word.length - 1));
+      const h = maxR - minR + 1, w = maxC - minC + 1;
+      const growth = h * w - this.area();
+      const squareness = Math.abs(h - w);
+      return cand.hits * 40 - growth * 0.6 - squareness * 2 + Math.random() * 6;
+    }
+  }
+
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function buildOnce(entries) {
+    // Mostly longest-first, with a bit of randomness for variety
+    const order = shuffle(entries.slice()).sort((a, b) =>
+      (b.answer.length + Math.random() * 3) - (a.answer.length + Math.random() * 3));
+    const layout = new Layout();
+    const first = order.shift();
+    layout.place(first, 0, 0, Math.random() < 0.5 ? 'across' : 'down', 0);
+
+    let pending = order;
+    let progress = true;
+    while (pending.length && progress) {
+      progress = false;
+      const next = [];
+      for (const entry of pending) {
+        const cands = layout.candidates(entry.answer);
+        if (!cands.length) { next.push(entry); continue; }
+        let best = null, bestScore = -Infinity;
+        for (const cand of cands) {
+          const s = layout.scoreCandidate(entry.answer, cand);
+          if (s > bestScore) { bestScore = s; best = cand; }
+        }
+        layout.place(entry, best.r, best.c, best.dir, best.hits);
+        progress = true;
+      }
+      pending = next;
+    }
+    layout.unplaced = pending;
+    return layout;
+  }
+
+  function generate(entries, attempts) {
+    let best = null;
+    const fitness = l => l.placed.length * 10000 + l.intersections * 50 - l.area();
+    for (let i = 0; i < attempts; i++) {
+      const l = buildOnce(entries);
+      if (!best || fitness(l) > fitness(best)) best = l;
+    }
+    return best;
+  }
+
+  // ---------- Puzzle model ----------
+  function toPuzzle(layout) {
+    const rows = layout.maxR - layout.minR + 1;
+    const cols = layout.maxC - layout.minC + 1;
+    const solution = Array.from({ length: rows }, () => Array(cols).fill(null));
+    for (const [k, cell] of layout.cells) {
+      const [r, c] = k.split(',').map(Number);
+      solution[r - layout.minR][c - layout.minC] = cell.ch;
+    }
+    const words = layout.placed.map(p => ({
+      answer: p.entry.answer, display: p.entry.display, clue: p.entry.clue,
+      row: p.row - layout.minR, col: p.col - layout.minC, dir: p.dir,
+    }));
+    // number the start cells in reading order
+    const starts = new Map();
+    words.forEach(w => { const k = key(w.row, w.col); if (!starts.has(k)) starts.set(k, { r: w.row, c: w.col }); });
+    const sorted = [...starts.values()].sort((a, b) => a.r - b.r || a.c - b.c);
+    const numbers = new Map();
+    sorted.forEach((s, i) => numbers.set(key(s.r, s.c), i + 1));
+    words.forEach(w => { w.number = numbers.get(key(w.row, w.col)); });
+    words.sort((a, b) => a.number - b.number);
+    return { rows, cols, solution, words, numbers, unplaced: layout.unplaced };
+  }
+
+  function scramble(word) {
+    if (new Set(word).size < 2) return word;
+    let s;
+    do { s = shuffle(word.split('')).join(''); } while (s === word);
+    return s;
+  }
+
+  // ---------- UI ----------
+  const $ = id => document.getElementById(id);
+  const gridEl = $('grid');
+  let puzzle = null;
+  let inputs = [];      // [r][c] -> input element
+  let cellWords = [];   // [r][c] -> {across: word, down: word}
+  let cur = { r: 0, c: 0, dir: 'across' };
+  let lastEntries = [];
+
+  function setStatus(msg, cls) { const s = $('status'); s.textContent = msg; s.className = cls || ''; }
+
+  function render() {
+    const { rows, cols, solution, words, numbers } = puzzle;
+    const size = Math.max(22, Math.min(40, Math.floor((window.innerWidth > 900 ? window.innerWidth - 420 : window.innerWidth - 60) * 0.6 / cols)));
+    document.documentElement.style.setProperty('--cell', size + 'px');
+    gridEl.innerHTML = '';
+    gridEl.style.gridTemplateColumns = `repeat(${cols}, var(--cell))`;
+    gridEl.classList.toggle('has-blocks', $('optBlocks').checked);
+    gridEl.style.background = $('optBlocks').checked ? 'var(--border)' : 'transparent';
+    gridEl.style.borderColor = $('optBlocks').checked ? 'var(--border)' : 'transparent';
+    inputs = Array.from({ length: rows }, () => Array(cols).fill(null));
+    cellWords = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({})));
+
+    words.forEach(w => {
+      for (let i = 0; i < w.answer.length; i++) {
+        const r = w.row + (w.dir === 'down' ? i : 0), c = w.col + (w.dir === 'across' ? i : 0);
+        cellWords[r][c][w.dir] = w;
+      }
+    });
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const div = document.createElement('div');
+        div.className = 'cell';
+        if (!solution[r][c]) { div.classList.add('block'); gridEl.appendChild(div); continue; }
+        const n = numbers.get(key(r, c));
+        if (n) { const span = document.createElement('span'); span.className = 'num'; span.textContent = n; div.appendChild(span); }
+        const inp = document.createElement('input');
+        inp.maxLength = 1;
+        inp.autocomplete = 'off';
+        inp.setAttribute('autocapitalize', 'characters');
+        inp.setAttribute('aria-label', `Row ${r + 1} column ${c + 1}`);
+        inp.dataset.r = r; inp.dataset.c = c;
+        inp.addEventListener('mousedown', onCellMouseDown);
+        inp.addEventListener('focus', () => { cur.r = r; cur.c = c; if (!cellWords[r][c][cur.dir]) cur.dir = cur.dir === 'across' ? 'down' : 'across'; highlight(); });
+        inp.addEventListener('keydown', onKey);
+        inp.addEventListener('input', onInput);
+        div.appendChild(inp);
+        inputs[r][c] = inp;
+        gridEl.appendChild(div);
+      }
+    }
+
+    for (const dir of ['across', 'down']) {
+      const ol = $(dir === 'across' ? 'cluesAcross' : 'cluesDown');
+      ol.innerHTML = '';
+      words.filter(w => w.dir === dir).forEach(w => {
+        const li = document.createElement('li');
+        w.hint = w.clue || `Unscramble: ${scramble(w.answer)}`;
+        li.innerHTML = `<b>${w.number}</b><span></span>`;
+        li.querySelector('span').textContent = `${w.hint} (${w.answer.length})`;
+        li.addEventListener('click', () => { cur = { r: w.row, c: w.col, dir: w.dir }; inputs[w.row][w.col].focus(); highlight(); });
+        w.li = li;
+        ol.appendChild(li);
+      });
+    }
+
+    $('empty').hidden = true;
+    $('puzzleWrap').hidden = false;
+    $('win').style.display = 'none';
+    const firstWord = words[0];
+    cur = { r: firstWord.row, c: firstWord.col, dir: firstWord.dir };
+    highlight();
+  }
+
+  function cellsOf(w) {
+    const out = [];
+    for (let i = 0; i < w.answer.length; i++)
+      out.push([w.row + (w.dir === 'down' ? i : 0), w.col + (w.dir === 'across' ? i : 0)]);
+    return out;
+  }
+
+  function currentWord() { return cellWords[cur.r]?.[cur.c]?.[cur.dir]; }
+
+  function highlight() {
+    gridEl.querySelectorAll('.cell').forEach(el => el.classList.remove('in-word', 'active'));
+    puzzle.words.forEach(w => w.li.classList.remove('current'));
+    const w = currentWord();
+    if (w) {
+      cellsOf(w).forEach(([r, c]) => inputs[r][c].parentElement.classList.add('in-word'));
+      w.li.classList.add('current');
+      w.li.scrollIntoView({ block: 'nearest' });
+      $('currentClue').textContent = `${w.number} ${w.dir === 'across' ? 'Across' : 'Down'}: ${w.hint}`;
+    }
+    inputs[cur.r]?.[cur.c]?.parentElement.classList.add('active');
+  }
+
+  function onCellMouseDown(e) {
+    const r = +e.target.dataset.r, c = +e.target.dataset.c;
+    if (r === cur.r && c === cur.c && document.activeElement === e.target) {
+      const other = cur.dir === 'across' ? 'down' : 'across';
+      if (cellWords[r][c][other]) { cur.dir = other; highlight(); }
+      e.preventDefault();
+    }
+  }
+
+  function focusCell(r, c) {
+    if (inputs[r]?.[c]) { cur.r = r; cur.c = c; inputs[r][c].focus(); highlight(); return true; }
+    return false;
+  }
+
+  function step(delta) {
+    const dr = cur.dir === 'down' ? delta : 0, dc = cur.dir === 'across' ? delta : 0;
+    focusCell(cur.r + dr, cur.c + dc);
+  }
+
+  function setLetter(r, c, ch) {
+    const inp = inputs[r][c];
+    inp.value = ch;
+    inp.parentElement.classList.remove('wrong', 'right', 'revealed');
+  }
+
+  function onInput(e) {
+    // mobile keyboards fire input instead of usable keydown
+    const inp = e.target;
+    const ch = inp.value.slice(-1).toUpperCase().replace(/[^A-Z]/g, '');
+    setLetter(+inp.dataset.r, +inp.dataset.c, ch);
+    if (ch) step(1);
+    afterChange();
+  }
+
+  function moveWord(delta) {
+    const list = puzzle.words;
+    const w = currentWord();
+    let i = w ? list.indexOf(w) : -1;
+    i = (i + delta + list.length) % list.length;
+    const n = list[i];
+    cur.dir = n.dir;
+    focusCell(n.row, n.col);
+  }
+
+  function onKey(e) {
+    const r = cur.r, c = cur.c;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (/^[a-zA-Z]$/.test(e.key)) {
+      e.preventDefault();
+      setLetter(r, c, e.key.toUpperCase());
+      step(1);
+      afterChange();
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      if (inputs[r][c].value) setLetter(r, c, '');
+      else { step(-1); setLetter(cur.r, cur.c, ''); }
+      afterChange();
+    } else if (e.key === 'Delete') {
+      e.preventDefault(); setLetter(r, c, ''); afterChange();
+    } else if (e.key.startsWith('Arrow')) {
+      e.preventDefault();
+      const dir = (e.key === 'ArrowLeft' || e.key === 'ArrowRight') ? 'across' : 'down';
+      const delta = (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 1;
+      if (cur.dir !== dir && cellWords[r][c][dir]) { cur.dir = dir; highlight(); return; }
+      // skip over gaps in the arrow direction
+      const dr = dir === 'down' ? delta : 0, dc = dir === 'across' ? delta : 0;
+      for (let rr = r + dr, cc = c + dc; rr >= 0 && cc >= 0 && rr < puzzle.rows && cc < puzzle.cols; rr += dr, cc += dc) {
+        if (inputs[rr][cc]) { if (!cellWords[rr][cc][cur.dir]) cur.dir = dir; focusCell(rr, cc); break; }
+      }
+    } else if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault(); moveWord(e.shiftKey ? -1 : 1);
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      const other = cur.dir === 'across' ? 'down' : 'across';
+      if (cellWords[r][c][other]) { cur.dir = other; highlight(); }
+    }
+  }
+
+  function afterChange() {
+    let all = true;
+    for (const w of puzzle.words) {
+      const done = cellsOf(w).every(([r, c]) => inputs[r][c].value === puzzle.solution[r][c]);
+      w.li.classList.toggle('done', done);
+      if (!done) all = false;
+    }
+    $('win').style.display = all ? 'block' : 'none';
+  }
+
+  function check() {
+    for (let r = 0; r < puzzle.rows; r++) for (let c = 0; c < puzzle.cols; c++) {
+      const inp = inputs[r][c];
+      if (!inp || !inp.value) continue;
+      const ok = inp.value === puzzle.solution[r][c];
+      inp.parentElement.classList.toggle('wrong', !ok);
+      inp.parentElement.classList.toggle('right', ok);
+    }
+  }
+
+  function revealCells(cells) {
+    cells.forEach(([r, c]) => {
+      const inp = inputs[r][c];
+      if (inp.value !== puzzle.solution[r][c]) { inp.value = puzzle.solution[r][c]; inp.parentElement.classList.add('revealed'); }
+      inp.parentElement.classList.remove('wrong');
+    });
+    afterChange();
+  }
+
+  function buildFromEntries(entries) {
+    if (!entries.length) { setStatus('Enter at least one word (2+ letters).', 'warn'); return; }
+    const attempts = Math.max(40, Math.min(300, Math.floor(6000 / entries.length)));
+    const layout = generate(entries, attempts);
+    puzzle = toPuzzle(layout);
+    render();
+    const placed = puzzle.words.length;
+    setStatus(`Placed ${placed} of ${entries.length} words in a ${puzzle.cols}×${puzzle.rows} grid.`, placed === entries.length ? 'ok' : 'warn');
+    $('unplaced').textContent = puzzle.unplaced.length
+      ? `Couldn't fit: ${puzzle.unplaced.map(e => e.display).join(', ')}. Try "New layout" or add words that share letters.`
+      : '';
+  }
+
+  $('btnGenerate').addEventListener('click', () => {
+    lastEntries = parseInput($('words').value);
+    buildFromEntries(lastEntries);
+  });
+  $('btnShuffle').addEventListener('click', () => {
+    if (!lastEntries.length) lastEntries = parseInput($('words').value);
+    buildFromEntries(lastEntries);
+  });
+  $('btnSample').addEventListener('click', () => { $('words').value = SAMPLE; $('btnGenerate').click(); });
+  $('btnCheck').addEventListener('click', () => puzzle && check());
+  $('btnReveal').addEventListener('click', () => {
+    if (!puzzle) return;
+    const cells = [];
+    for (let r = 0; r < puzzle.rows; r++) for (let c = 0; c < puzzle.cols; c++) if (inputs[r][c]) cells.push([r, c]);
+    revealCells(cells);
+  });
+  $('btnRevealWord').addEventListener('click', () => { const w = puzzle && currentWord(); if (w) revealCells(cellsOf(w)); });
+  $('btnClear').addEventListener('click', () => {
+    if (!puzzle) return;
+    for (let r = 0; r < puzzle.rows; r++) for (let c = 0; c < puzzle.cols; c++) if (inputs[r][c]) setLetter(r, c, '');
+    afterChange();
+  });
+  $('btnPrint').addEventListener('click', () => window.print());
+  $('optBlocks').addEventListener('change', () => { if (puzzle) { const keep = saveState(); render(); restoreState(keep); } });
+
+  function saveState() { return inputs.map(row => row.map(i => i ? i.value : null)); }
+  function restoreState(s) { s.forEach((row, r) => row.forEach((v, c) => { if (inputs[r][c]) inputs[r][c].value = v; })); afterChange(); }
+
+  // expose for testing
+  window.Crossword = { parseInput, generate, toPuzzle };
+
+  $('words').value = SAMPLE;
+  $('btnGenerate').click();
+})();
+</script>
+</body>
+</html>
